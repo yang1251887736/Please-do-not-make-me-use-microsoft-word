@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig({
-  base: "/yyc/",
+  base: "/Please-do-not-make-me-use-microsoft-word/",
   plugins: [react()],
   test: {
     globals: true,
