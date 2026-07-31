@@ -28,7 +28,7 @@ describe("App", () => {
     const paragraphs = await screen.findAllByLabelText("Paragraph text");
     const paragraph = paragraphs[0];
     expect(paragraph).toHaveValue(
-      "This sample demonstrates the dissertation prototype as a complete editing workflow. Every piece of content has a visible boundary, can be moved independently, and can be placed beside another block.",
+      "Every piece of content has a visible boundary, can be moved independently, and can be placed beside another block.",
     );
     await user.clear(paragraph);
     await user.type(paragraph, "My research paragraph");
