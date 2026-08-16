@@ -136,15 +136,18 @@ describe("document operations", () => {
     ]);
   });
   //4
-  it("moves side drops into the matching column when two columns exist", () => {
+  it("creates a third column beside the targeted column", () => {
     const twoColumns = moveBlock(fixture(), "c", "a", "right");
     const movedAgain = moveBlock(twoColumns, "b", "c", "left");
+    expect(movedAgain.rows[0].columns).toHaveLength(3);
     expect(
-      movedAgain.rows[0].columns[0].blocks.map((block) => block.id),
-    ).toEqual(["a", "b"]);
+      movedAgain.rows[0].columns.map((column) =>
+        column.blocks.map((block) => block.id),
+      ),
+    ).toEqual([["a"], ["b"], ["c"]]);
     expect(
-      movedAgain.rows[0].columns[1].blocks.map((block) => block.id),
-    ).toEqual(["c"]);
+      movedAgain.rows[0].columns.reduce((sum, column) => sum + column.width, 0),
+    ).toBeCloseTo(100);
   });
   //5
   it("moves a block out of columns into a new full-width row", () => {

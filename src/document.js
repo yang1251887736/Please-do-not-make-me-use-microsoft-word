@@ -4,9 +4,15 @@ const createId = (prefix) =>
   `${prefix}-${crypto.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
 // In requestAddBlock() App.jsx
 function createBlock(type) {
+  const format = {
+    bold: false,
+    italic: false,
+    underline: false,
+    align: "left",
+  };
   switch (type) {
     case "heading":
-      return { id: createId("block"), type, level: 2, text: "" };
+      return { id: createId("block"), type, level: 2, text: "", format };
     case "image":
       return {
         id: createId("block"),
@@ -22,23 +28,25 @@ function createBlock(type) {
         id: createId("block"),
         type,
         items: [{ id: createId("item"), text: "" }],
+        format,
       };
     case "todoList":
       return {
         id: createId("block"),
         type,
         items: [{ id: createId("item"), text: "", checked: false }],
+        format,
       };
     case "quote":
-      return { id: createId("block"), type, text: "", attribution: "" };
+      return { id: createId("block"), type, text: "", attribution: "", format };
     case "code":
       return { id: createId("block"), type, code: "", language: "plain" };
     case "callout":
-      return { id: createId("block"), type, text: "", tone: "info" };
+      return { id: createId("block"), type, text: "", tone: "info", format };
     case "divider":
       return { id: createId("block"), type };
     default:
-      return { id: createId("block"), type: "paragraph", text: "" };
+      return { id: createId("block"), type: "paragraph", text: "", format };
   }
 }
 
@@ -292,16 +300,17 @@ function normaliseRows(rows) {
     if (row.columns.length === 1) {
       return { ...row, columns: [{ ...row.columns[0], width: 100 }] };
     }
-    const first = Math.min(  // Width Correction
-      MAX_COLUMN_WIDTH,
-      Math.max(MIN_COLUMN_WIDTH, row.columns[0].width),  
+    const total = row.columns.reduce(
+      (sum, column) => sum + (Number.isFinite(column.width) ? column.width : 0),
+      0,
     );
+    const equalWidth = 100 / row.columns.length;
     return {
       ...row,
-      columns: [
-        { ...row.columns[0], width: first },
-        { ...row.columns[1], width: 100 - first },
-      ],
+      columns: row.columns.map((column) => ({
+        ...column,
+        width: total > 0 ? (column.width / total) * 100 : equalWidth,
+      })),
     };
   });
 }
@@ -377,21 +386,20 @@ function moveBlock(document, activeId, targetId, position) {
       0,
       activeBlock,
     );
-  } else if (targetRow.columns.length === 1) {    // Drag horizontally to create columns
-    const targetColumn = targetRow.columns[0];
+  } else {    // A side drop always creates a column beside the target column.
+    const columnCount = targetRow.columns.length + 1;
+    const newWidth = 100 / columnCount;
+    targetRow.columns.forEach((column) => {
+      column.width *= (columnCount - 1) / columnCount;
+    });
     const newColumn = {
       id: createId("column"),
-      width: 50,
+      width: newWidth,
       blocks: [activeBlock],
     };
-    targetColumn.width = 50;
-    targetRow.columns =
-      position === "left"
-        ? [newColumn, targetColumn]
-        : [targetColumn, newColumn];
-  } else { 
-    const sideIndex = position === "left" ? 0 : 1;   // Drag onto an existing column to append content
-    targetRow.columns[sideIndex].blocks.push(activeBlock);
+    const insertAt =
+      targetLocation.columnIndex + (position === "right" ? 1 : 0);
+    targetRow.columns.splice(insertAt, 0, newColumn);
   }
   next.rows = normaliseRows(next.rows);
   return touch(next);
@@ -422,16 +430,23 @@ function moveBlockToNewRow(document, activeId, targetRowId) {
 }
 
 // Modify the widths of the two columns in the two-column layout
-function resizeColumns(document, rowId, firstColumnWidth) {
+function resizeColumns(document, rowId, dividerIndexOrWidth, requestedWidth) {
   const next = cloneDocument(document);
   const row = next.rows.find((candidate) => candidate.id === rowId);
-  if (!row || row.columns.length !== 2) return document;
-  const width = Math.min(
-    MAX_COLUMN_WIDTH,
-    Math.max(MIN_COLUMN_WIDTH, firstColumnWidth),
-  );
-  row.columns[0].width = width;
-  row.columns[1].width = 100 - width;
+  if (!row || row.columns.length < 2) return document;
+  // Keep the original three-argument API working for imported code and tests.
+  const dividerIndex = requestedWidth === undefined ? 0 : dividerIndexOrWidth;
+  const desiredWidth =
+    requestedWidth === undefined ? dividerIndexOrWidth : requestedWidth;
+  if (dividerIndex < 0 || dividerIndex >= row.columns.length - 1) {
+    return document;
+  }
+  const pairTotal =
+    row.columns[dividerIndex].width + row.columns[dividerIndex + 1].width;
+  const minimum = Math.min(MIN_COLUMN_WIDTH, pairTotal / 2);
+  const width = Math.min(pairTotal - minimum, Math.max(minimum, desiredWidth));
+  row.columns[dividerIndex].width = width;
+  row.columns[dividerIndex + 1].width = pairTotal - width;
   return touch(next);
 }
 
@@ -440,17 +455,216 @@ function touch(document) {
   return { ...document, updatedAt: /* @__PURE__ */ new Date().toISOString() };
 }
 
+// ---------------------------------------------------------------------------
+// Selection-based formatting
+//
+// Text blocks keep a plain `text` string for the editor surface plus an
+// optional array of `runs`. A run is { text, bold?, italic?, underline? }.
+// Undefined flags inherit the block-level format, so legacy documents that
+// have no runs keep working unchanged.
+// ---------------------------------------------------------------------------
+
+const RUN_FORMAT_KEYS = ["bold", "italic", "underline"];
+
+const isRunFormatValue = (value) =>
+  value === undefined || typeof value === "boolean";
+
+function runFormat(run) {
+  return {
+    bold: run.bold,
+    italic: run.italic,
+    underline: run.underline,
+  };
+}
+
+function runsMatchText(runs, text) {
+  if (!Array.isArray(runs)) return false;
+  return (
+    runs.every(
+      (run) =>
+        run &&
+        typeof run === "object" &&
+        isString(run.text) &&
+        run.text.length > 0 &&
+        isRunFormatValue(run.bold) &&
+        isRunFormatValue(run.italic) &&
+        isRunFormatValue(run.underline),
+    ) && runs.map((run) => run.text).join("") === text
+  );
+}
+
+function isRuns(value, text) {
+  if (value === undefined) return true;
+  return runsMatchText(value, text);
+}
+
+function mergeAdjacentRuns(runs) {
+  const merged = [];
+  for (const run of runs) {
+    const previous = merged.at(-1);
+    if (
+      previous &&
+      previous.bold === run.bold &&
+      previous.italic === run.italic &&
+      previous.underline === run.underline
+    ) {
+      previous.text += run.text;
+    } else {
+      merged.push({ ...run });
+    }
+  }
+  return merged.filter((run) => run.text.length > 0);
+}
+
+function collapseRuns(runs) {
+  const merged = mergeAdjacentRuns(runs);
+  const hasFormatting = merged.some(
+    (run) =>
+      run.bold !== undefined ||
+      run.italic !== undefined ||
+      run.underline !== undefined,
+  );
+  return hasFormatting ? merged : undefined;
+}
+
+// Keep run styles attached to their text while a single contiguous edit
+// (typing, deleting a selection, or pasting) changes the plain text.
+function editTextRuns(oldText, runs, newText) {
+  if (!runsMatchText(runs, oldText)) return undefined;
+  const sourceRuns = runs ?? [];
+  let prefix = 0;
+  const minLength = Math.min(oldText.length, newText.length);
+  while (prefix < minLength && oldText[prefix] === newText[prefix]) prefix += 1;
+
+  let oldSuffix = oldText.length;
+  let newSuffix = newText.length;
+  while (
+    oldSuffix > prefix &&
+    newSuffix > prefix &&
+    oldText[oldSuffix - 1] === newText[newSuffix - 1]
+  ) {
+    oldSuffix -= 1;
+    newSuffix -= 1;
+  }
+
+  const inserted = newText.slice(prefix, newSuffix);
+  const before = [];
+  const after = [];
+  let styleAtPrefix = {};
+  let styleFound = false;
+  let position = 0;
+
+  for (const run of sourceRuns) {
+    const runStart = position;
+    const runEnd = position + run.text.length;
+    position = runEnd;
+    if (runEnd <= prefix) {
+      before.push(run);
+      if (runEnd === prefix) {
+        styleAtPrefix = runFormat(run);
+        styleFound = true;
+      }
+      continue;
+    }
+    if (runStart >= oldSuffix) {
+      after.push(run);
+      continue;
+    }
+    const style = runFormat(run);
+    const beforeText = run.text.slice(0, Math.max(0, prefix - runStart));
+    const afterText = run.text.slice(Math.max(0, oldSuffix - runStart));
+    if (beforeText) before.push({ ...style, text: beforeText });
+    if (afterText) after.push({ ...style, text: afterText });
+    if (!styleFound) {
+      styleAtPrefix = style;
+      styleFound = true;
+    }
+  }
+
+  if (!styleFound) {
+    const edgeRun = prefix === 0 ? sourceRuns[0] : sourceRuns.at(-1);
+    styleAtPrefix = edgeRun ? runFormat(edgeRun) : {};
+  }
+
+  return collapseRuns([
+    ...before,
+    ...(inserted ? [{ ...styleAtPrefix, text: inserted }] : []),
+    ...after,
+  ]);
+}
+
+// Toggle one inline flag for the selected range. The effective value for the
+// range comes from the run itself, falling back to the block-level format.
+function toggleRunsFormat(text, runs, start, end, key, blockFormat) {
+  if (!isString(text) || !RUN_FORMAT_KEYS.includes(key)) return runs;
+  const safeStart = Math.max(0, Math.min(start, text.length));
+  const safeEnd = Math.max(safeStart, Math.min(end, text.length));
+  const sourceRuns =
+    runsMatchText(runs, text) && runs?.length ? runs : text ? [{ text }] : [];
+  const result = [];
+  let position = 0;
+
+  for (const run of sourceRuns) {
+    const runStart = position;
+    const runEnd = position + run.text.length;
+    position = runEnd;
+    if (runEnd <= safeStart || runStart >= safeEnd) {
+      result.push(run);
+      continue;
+    }
+    const beforeText = run.text.slice(0, Math.max(0, safeStart - runStart));
+    const insideText = run.text.slice(
+      Math.max(0, safeStart - runStart),
+      Math.max(0, safeEnd - runStart),
+    );
+    const afterText = run.text.slice(Math.max(0, safeEnd - runStart));
+    if (beforeText) result.push({ ...run, text: beforeText });
+    if (insideText) {
+      const current = run[key];
+      const effective =
+        current === undefined ? Boolean(blockFormat?.[key]) : current;
+      result.push({ ...run, text: insideText, [key]: !effective });
+    }
+    if (afterText) result.push({ ...run, text: afterText });
+  }
+
+  return collapseRuns(result);
+}
+
 // Data validation(isString, isBlock, parseDocument)
 const isString = (value) => typeof value === "string";
+
+function isFormat(value) {
+  if (value === undefined) return true;
+  return (
+    value &&
+    typeof value === "object" &&
+    typeof value.bold === "boolean" &&
+    typeof value.italic === "boolean" &&
+    typeof value.underline === "boolean" &&
+    ["left", "center", "right", "justify"].includes(value.align)
+  );
+}
 
 function isBlock(value) {
   if (!value || typeof value !== "object") return false;
   const block = value;
   if (!isString(block.id) || !isString(block.type)) return false;  // block must have id and type
   // different type of blocks have different requirements
-  if (block.type === "paragraph") return isString(block.text);
+  if (block.type === "paragraph") {
+    return (
+      isString(block.text) &&
+      isFormat(block.format) &&
+      isRuns(block.runs, block.text)
+    );
+  }
   if (block.type === "heading") {
-    return isString(block.text) && (block.level === 1 || block.level === 2);
+    return (
+      isString(block.text) &&
+      (block.level === 1 || block.level === 2) &&
+      isFormat(block.format) &&
+      isRuns(block.runs, block.text)
+    );
   }
   if (block.type === "image") {
     return (
@@ -471,8 +685,13 @@ function isBlock(value) {
       block.items.every((item) => {
         if (!item || typeof item !== "object") return false;
         const candidate = item;
-        return isString(candidate.id) && isString(candidate.text);
-      })
+        return (
+          isString(candidate.id) &&
+          isString(candidate.text) &&
+          isRuns(candidate.runs, candidate.text)
+        );
+      }) &&
+      isFormat(block.format)
     );
   }
   if (block.type === "todoList") {
@@ -484,13 +703,20 @@ function isBlock(value) {
         return (
           isString(candidate.id) &&
           isString(candidate.text) &&
-          typeof candidate.checked === "boolean"
+          typeof candidate.checked === "boolean" &&
+          isRuns(candidate.runs, candidate.text)
         );
-      })
+      }) &&
+      isFormat(block.format)
     );
   }
   if (block.type === "quote") {
-    return isString(block.text) && isString(block.attribution);
+    return (
+      isString(block.text) &&
+      isString(block.attribution) &&
+      isFormat(block.format) &&
+      isRuns(block.runs, block.text)
+    );
   }
   if (block.type === "code") {
     return (
@@ -506,6 +732,8 @@ function isBlock(value) {
   if (block.type === "callout") {
     return (
       isString(block.text) &&
+      isFormat(block.format) &&
+      isRuns(block.runs, block.text) &&
       (block.tone === "info" ||
         block.tone === "warning" ||
         block.tone === "success")
@@ -538,7 +766,6 @@ function parseDocument(value) {
       isString(row.id) &&
       Array.isArray(row.columns) &&
       row.columns.length >= 1 &&
-      row.columns.length <= 2 &&
       row.columns.every(
         (column) =>
           column &&
@@ -560,6 +787,7 @@ export {
   createId,
   createSampleDocument,
   deleteBlock,
+  editTextRuns,
   findBlockLocation,
   insertBlockAfter,
   moveBlock,
@@ -567,6 +795,7 @@ export {
   parseDocument,
   resizeColumns,
   sampleArtDataUrl,
+  toggleRunsFormat,
   touch,
   updateBlock,
 };

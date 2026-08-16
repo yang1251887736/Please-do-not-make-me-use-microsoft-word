@@ -140,7 +140,7 @@ function SortableBlock({ block, isDraggingAny, onChange, onAdd, onDelete }) {
 }
 
 // Draggable divider between two columns (for adjusting the width of left and right columns)
-function ColumnDivider({ row, onResize }) {
+function ColumnDivider({ row, columnIndex, onResize }) {
   const dividerRef = useRef(null);
   const [isResizing, setIsResizing] = useState(false);
   useEffect(() => {
@@ -155,8 +155,15 @@ function ColumnDivider({ row, onResize }) {
     setIsResizing(true);
     const bounds = rowElement.getBoundingClientRect();
     const handleMove = (moveEvent) => {
-      const width = ((moveEvent.clientX - bounds.left) / bounds.width) * 100;  // Percentage of the left column
-      onResize(row.id, width);
+      const dividerSpace = 18 * (row.columns.length - 1);
+      const contentWidth = Math.max(1, bounds.width - dividerSpace);
+      const previousWidth = row.columns
+        .slice(0, columnIndex)
+        .reduce((sum, column) => sum + column.width, 0);
+      const pointerX =
+        moveEvent.clientX - bounds.left - 18 * columnIndex;
+      const cumulativeWidth = (pointerX / contentWidth) * 100;
+      onResize(row.id, columnIndex, cumulativeWidth - previousWidth);
     };
     const handleEnd = () => {
       setIsResizing(false);
@@ -180,7 +187,9 @@ function ColumnDivider({ row, onResize }) {
           const step = event.shiftKey ? 10 : 5;
           onResize(
             row.id,
-            row.columns[0].width + (event.key === "ArrowRight" ? step : -step),
+            columnIndex,
+            row.columns[columnIndex].width +
+              (event.key === "ArrowRight" ? step : -step),
           );
         }
       }}
@@ -225,16 +234,21 @@ function EditorCanvas({
   return (
     <main className="document-canvas" aria-label="Document editor">
       {document2.rows.map((row) => {
-        const isTwoColumn = row.columns.length === 2;
-        const rowStyle = isTwoColumn
+        const isMultiColumn = row.columns.length > 1;
+        const rowStyle = isMultiColumn
           ? {
-              gridTemplateColumns: `${row.columns[0].width}fr 18px ${row.columns[1].width}fr`,
+              gridTemplateColumns: row.columns
+                .flatMap((column, index) => [
+                  `${column.width}fr`,
+                  ...(index < row.columns.length - 1 ? ["18px"] : []),
+                ])
+                .join(" "),
             }
           : void 0;
         return (
           <Fragment key={row.id}>
             <section
-              className={`document-row ${isTwoColumn ? "is-two-column" : ""}`}
+              className={`document-row ${isMultiColumn ? "is-multi-column" : ""}`}
               style={rowStyle}
               data-row-id={row.id}
             >
@@ -257,13 +271,17 @@ function EditorCanvas({
                       ))}
                     </SortableContext>
                   </div>
-                  {isTwoColumn && columnIndex === 0 && (
-                    <ColumnDivider row={row} onResize={onResizeRow} />
+                  {isMultiColumn && columnIndex < row.columns.length - 1 && (
+                    <ColumnDivider
+                      row={row}
+                      columnIndex={columnIndex}
+                      onResize={onResizeRow}
+                    />
                   )}
                 </Fragment>
               ))}
             </section>
-            {isTwoColumn && (
+            {isMultiColumn && (
               <NewRowDropZone rowId={row.id} visible={activeBlockId !== null} />
             )}
           </Fragment>

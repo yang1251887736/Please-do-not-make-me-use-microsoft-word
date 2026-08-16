@@ -1,5 +1,5 @@
 // save
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 // drag and drop
 import {
   DndContext,
@@ -119,12 +119,54 @@ function App() {
   const imageInsertAfterRef = useRef(null);
   const hasLoadedRef = useRef(false);
   const saveSequenceRef = useRef(0);
+  const pendingFocusRef = useRef(null);
+  const undoStackRef = useRef([]);
+  const redoStackRef = useRef([]);
+  const lastHistoryChangeRef = useRef({ key: null, time: 0 });
   const sensors = useSensors(  // two drag methods
     useSensor(PointerSensor, { activationConstraint: { distance: 7 } }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     }),
   );
+
+  const applyDocument = useCallback((updater, historyKey = null) => {
+    setDocument((current) => {
+      if (!current) return current;
+      const next = typeof updater === "function" ? updater(current) : updater;
+      if (!next || next === current) return current;
+      const now = Date.now();
+      const last = lastHistoryChangeRef.current;
+      const grouped = historyKey && last.key === historyKey && now - last.time < 750;
+      if (!grouped) {
+        undoStackRef.current.push(structuredClone(current));
+        if (undoStackRef.current.length > 100) undoStackRef.current.shift();
+      }
+      redoStackRef.current = [];
+      lastHistoryChangeRef.current = { key: historyKey, time: now };
+      return next;
+    });
+  }, []);
+
+  const undo = useCallback(() => {
+    setDocument((current) => {
+      const previous = undoStackRef.current.pop();
+      if (!current || !previous) return current;
+      redoStackRef.current.push(structuredClone(current));
+      lastHistoryChangeRef.current = { key: null, time: 0 };
+      return touch(previous);
+    });
+  }, []);
+
+  const redo = useCallback(() => {
+    setDocument((current) => {
+      const next = redoStackRef.current.pop();
+      if (!current || !next) return current;
+      undoStackRef.current.push(structuredClone(current));
+      lastHistoryChangeRef.current = { key: null, time: 0 };
+      return touch(next);
+    });
+  }, []);
   // Read documents and history when open it
   useEffect(() => {
     let cancelled = false;
@@ -153,6 +195,31 @@ function App() {
       cancelled = true;
     };
   }, []);
+
+  // undo to the last step
+  useEffect(() => {
+    const handleUndoRedo = (event) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z") return;
+      event.preventDefault();
+      if (event.shiftKey) redo();
+      else undo();
+    };
+    window.addEventListener("keydown", handleUndoRedo, true);
+    return () => window.removeEventListener("keydown", handleUndoRedo, true);
+  }, [redo, undo]);
+
+  useLayoutEffect(() => {
+    const blockId = pendingFocusRef.current;
+    if (!blockId || !document) return;
+    const editor = window.document.querySelector(
+      `[data-block-id="${blockId}"] [data-editor-field]`,
+    );
+    if (editor instanceof HTMLElement) {
+      editor.focus();
+      editor.setSelectionRange?.(0, 0);
+      pendingFocusRef.current = null;
+    }
+  }, [document]);
   // save automatically for each change
   useLayoutEffect(() => {
     if (!document || !hasLoadedRef.current) return;
@@ -193,8 +260,10 @@ function App() {
 
   // Modify the existing Block
   const changeBlock = (block) => {
-    setDocument((current) =>
-      current ? updateBlock(current, block.id, () => block) : current,
+    applyDocument(
+      (current) =>
+        current ? updateBlock(current, block.id, () => block) : current,
+      `block:${block.id}`,
     );
   };
 
@@ -205,10 +274,10 @@ function App() {
       imageInputRef.current?.click();
       return;
     }
-    setDocument((current) =>
-      current
-        ? insertBlockAfter(current, afterBlockId, createBlock(type))
-        : current,
+    const block = createBlock(type);
+    pendingFocusRef.current = block.id;
+    applyDocument((current) =>
+      current ? insertBlockAfter(current, afterBlockId, block) : current,
     );
   };
 
@@ -229,7 +298,7 @@ function App() {
       if (block.type !== "image") return;
       block.src = reader.result;
       block.alt = file.name.replace(/\.[^.]+$/, "").replaceAll(/[-_]/g, " ");
-      setDocument((current) =>
+      applyDocument((current) =>
         current
           ? insertBlockAfter(current, imageInsertAfterRef.current, block)
           : current,
@@ -266,7 +335,7 @@ function App() {
     setDragMode(null);
     if (!overId) return;
     const { targetId, position } = parseDropId(overId);
-    setDocument((current) => {
+    applyDocument((current) => {
       if (!current) return current;
       return position === "new-row-after"
         ? moveBlockToNewRow(current, activeId, targetId)
@@ -274,7 +343,7 @@ function App() {
     });
   };
 
-  // export document to json
+  // export document to json or PDF
   const exportDocument = () => {
     if (!document) return;
     const blob = new Blob([JSON.stringify(document, null, 2)], {
@@ -292,6 +361,10 @@ function App() {
     URL.revokeObjectURL(url);
     setNotice("Document exported as JSON.");
   };
+  const exportPdf = () => {
+    window.print();
+    setNotice("Print dialog opened. Choose ‘Save as PDF’ as the destination.");
+  };
   // Import json to document
   const importDocument = (file) => {
     if (!document) return;
@@ -306,7 +379,7 @@ function App() {
             "before-import",
             false,
           );
-          setDocument(touch(parsed));
+          applyDocument(touch(parsed));
           setNotice(
             preserved
               ? "Document imported successfully. The previous version was preserved."
@@ -417,7 +490,10 @@ function App() {
               Import
             </button>
             <button className="button" type="button" onClick={exportDocument}>
-              Export
+              Export JSON
+            </button>
+            <button className="button" type="button" onClick={exportPdf}>
+              Export PDF
             </button>
             <button
               className="button history-button"
@@ -449,13 +525,17 @@ function App() {
             onBlockChange={changeBlock}
             onAddBlock={requestAddBlock}
             onDeleteBlock={(blockId) =>
-              setDocument((current) =>
+              applyDocument((current) =>
                 current ? deleteBlock(current, blockId) : current,
               )
             }
-            onResizeRow={(rowId, width) =>
-              setDocument((current) =>
-                current ? resizeColumns(current, rowId, width) : current,
+            onResizeRow={(rowId, columnIndex, width) =>
+              applyDocument(
+                (current) =>
+                  current
+                    ? resizeColumns(current, rowId, columnIndex, width)
+                    : current,
+                `resize:${rowId}:${columnIndex}`,
               )
             }
           />
@@ -538,7 +618,7 @@ function App() {
                         "before-reset",
                         false,
                       );
-                      setDocument(createSampleDocument());
+                      applyDocument(createSampleDocument());
                       setResetOpen(false);
                       setNotice(
                         preserved
@@ -607,7 +687,7 @@ function App() {
                   disabled={historyBusy}
                   onClick={() => {
                     const candidate = restoreCandidate;
-                    setDocument(touch(parseDocument(candidate.document)));
+                    applyDocument(touch(parseDocument(candidate.document)));
                     setRestoreCandidate(null);
                     setHistoryOpen(false);
                     setNotice(`Restored \u201C${candidate.label}\u201D.`);

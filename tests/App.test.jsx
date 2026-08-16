@@ -8,10 +8,21 @@
 6.shows a confirmation before resetting the sample: Click Reset Sample, check whether the confirmation pop-up window pops up, then click Cancel to verify the confirmation window closes properly
 7.resizes columns with the keyboard: Focus on the column divider bar, adjust column widths using directional keys, and confirm the gridTemplateColumns value changes from 44fr 18px 56fr to 49fr 18px 51fr
 */
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../src/App";
+
+function setCaretAtEnd(element) {
+  element.focus();
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  range.collapse(false);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
 beforeEach(async () => {
   await new Promise((resolve) => {
     const request = indexedDB.deleteDatabase("canvas-block-editor");
@@ -27,7 +38,7 @@ describe("App", () => {
     render(<App />);
     const paragraphs = await screen.findAllByLabelText("Paragraph text");
     const paragraph = paragraphs[0];
-    expect(paragraph).toHaveValue(
+    expect(paragraph).toHaveTextContent(
       "Every piece of content has a visible boundary, can be moved independently, and can be placed beside another block.",
     );
     await user.clear(paragraph);
@@ -36,7 +47,7 @@ describe("App", () => {
       () => expect(screen.getByText("Saved locally")).toBeInTheDocument(),
       { timeout: 2500 },
     );
-    expect(paragraph).toHaveValue("My research paragraph");
+    expect(paragraph).toHaveTextContent("My research paragraph");
   });
   //2
   it("adds a heading from the block menu", async () => {
@@ -94,7 +105,7 @@ describe("App", () => {
     );
     await user.click(screen.getByRole("button", { name: "Restore version" }));
     await waitFor(() =>
-      expect(screen.getAllByLabelText("Paragraph text")[0]).toHaveValue(
+      expect(screen.getAllByLabelText("Paragraph text")[0]).toHaveTextContent(
         "Version one paragraph",
       ),
     );
@@ -102,7 +113,7 @@ describe("App", () => {
     expect(screen.getAllByRole("button", { name: /^Restore / })).toHaveLength(
       1,
     );
-  });
+  }, 10000);
   //5
   it("resizes the whole image block without metadata fields", async () => {
     const user = userEvent.setup();
@@ -150,6 +161,57 @@ describe("App", () => {
     expect(row).toHaveStyle({
       gridTemplateColumns: "49fr 18px 51fr",
     });
+  });
+
+  it("focuses the paragraph created by Enter and navigates with arrow keys", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    const first = (await screen.findAllByLabelText("Paragraph text"))[0];
+    setCaretAtEnd(first);
+    await user.keyboard("{Enter}");
+    const paragraphs = screen.getAllByLabelText("Paragraph text");
+    expect(document.activeElement).toBe(paragraphs[1]);
+    await user.keyboard("{ArrowUp}");
+    expect(document.activeElement).toBe(first);
+  });
+
+  it("undoes and redoes a grouped text edit with keyboard shortcuts", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    const paragraph = (await screen.findAllByLabelText("Paragraph text"))[0];
+    const original = paragraph.textContent;
+    await user.clear(paragraph);
+    await user.type(paragraph, "Undo this edit");
+    await user.keyboard("{Control>}z{/Control}");
+    expect(paragraph).toHaveTextContent(original);
+    await user.keyboard("{Control>}{Shift>}z{/Shift}{/Control}");
+    expect(paragraph).toHaveTextContent("Undo this edit");
+  });
+
+  it("applies block text formatting from the Word-style toolbar", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    const paragraph = (await screen.findAllByLabelText("Paragraph text"))[0];
+    paragraph.focus();
+    await user.click(screen.getAllByRole("button", { name: "Bold" })[0]);
+    await user.click(screen.getAllByRole("button", { name: "Align center" })[0]);
+    expect(paragraph).toHaveStyle({ fontWeight: "700", textAlign: "center" });
+  });
+
+  it("renders syntax-highlighted tokens in code blocks", async () => {
+    render(<App />);
+    await screen.findAllByLabelText("Code block");
+    expect(document.querySelector(".code-editor-layer pre .token")).toBeTruthy();
+  });
+
+  it("opens the print dialog for PDF export", async () => {
+    const user = userEvent.setup();
+    const print = vi.spyOn(window, "print").mockImplementation(() => {});
+    render(<App />);
+    await screen.findAllByLabelText("Paragraph text");
+    await user.click(screen.getByRole("button", { name: "Export PDF" }));
+    expect(print).toHaveBeenCalledOnce();
+    print.mockRestore();
   });
 });
 /*

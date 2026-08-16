@@ -24,8 +24,8 @@ test.beforeEach(async ({ page }) => {
 //1
 test("edits, adds a block and restores work after reload", async ({ page }) => {
   const paragraph = page.getByLabel("Paragraph text").first();
-  await expect(paragraph).toHaveValue(
-    "This sample demonstrates the dissertation prototype as a complete editing workflow. Every piece of content has a visible boundary, can be moved independently, and can be placed beside another block.",
+  await expect(paragraph).toHaveText(
+    "Every piece of content has a visible boundary, can be moved independently, and can be placed beside another block.",
   );
   await paragraph.fill("An experimental paragraph");
   await page.getByRole("button", { name: "Add block", exact: true }).click();
@@ -70,22 +70,22 @@ test("edits, adds a block and restores work after reload", async ({ page }) => {
     timeout: 3e3,
   });
   await page.reload();
-  await expect(paragraph).toHaveValue("An experimental paragraph");
-  await expect(page.getByLabel("Heading text").last()).toHaveValue(
+  await expect(paragraph).toHaveText("An experimental paragraph");
+  await expect(page.getByLabel("Heading text").last()).toHaveText(
     "A new section",
   );
 });
 //2
 test("exports a self-contained JSON document", async ({ page }) => {
   const downloadPromise = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Export" }).click();
+  await page.getByRole("button", { name: "Export JSON", exact: true }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/\.json$/);
 });
 //2
 test("reorders blocks with a pointer drag", async ({ page }) => {
   const rightColumn = page.locator(
-    ".document-row.is-two-column .document-column:last-child",
+    ".document-row.is-multi-column .document-column:last-child",
   );
   const source = rightColumn.locator(".block-shell--paragraph .drag-handle");
   const target = rightColumn.locator(".block-shell--heading");
@@ -154,7 +154,7 @@ test("reorders blocks with a pointer drag", async ({ page }) => {
 //4
 test("moves a column block into a new full-width row", async ({ page }) => {
   const rightColumn = page.locator(
-    ".document-row.is-two-column .document-column:last-child",
+    ".document-row.is-multi-column .document-column:last-child",
   );
   const source = rightColumn.locator(".block-shell--paragraph .drag-handle");
   const sourceBox = await source.boundingBox();
@@ -183,9 +183,9 @@ test("moves a column block into a new full-width row", async ({ page }) => {
   await page.mouse.up();
 
   const movedParagraph = page.locator(
-    '.document-row.is-two-column + .new-row-drop-zone + .document-row:not(.is-two-column) textarea[aria-label="Paragraph text"]',
+    '.document-row.is-multi-column + .new-row-drop-zone + .document-row:not(.is-multi-column) [aria-label="Paragraph text"]',
   );
-  await expect(movedParagraph).toHaveValue(
+  await expect(movedParagraph).toHaveText(
     "Drag a block above or below another one to reorder the document. Drop it on a side edge to create a column, then drag the divider to control the layout.",
   );
 });
@@ -193,7 +193,7 @@ test("moves a column block into a new full-width row", async ({ page }) => {
 test("shows the sample two-column layout and collapses it on mobile", async ({
   page,
 }) => {
-  await expect(page.locator(".document-row.is-two-column")).toHaveCount(1);
+  await expect(page.locator(".document-row.is-multi-column")).toHaveCount(1);
   const imageBlock = page.locator(".block-shell--image");
   const sampleImage = imageBlock.locator("img");
   const resizeHandle = page.getByRole("button", { name: "Resize image" });
@@ -220,7 +220,7 @@ test("shows the sample two-column layout and collapses it on mobile", async ({
   expect(Math.abs(blockBox.width - imageBox.width)).toBeLessThan(3);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator(".column-divider")).toBeHidden();
-  await expect(page.locator(".document-row.is-two-column")).toHaveCSS(
+  await expect(page.locator(".document-row.is-multi-column")).toHaveCSS(
     "flex-direction",
     "column",
   );
@@ -238,7 +238,7 @@ test("creates and restores a named document version", async ({ page }) => {
   await page.getByRole("button", { name: /History/ }).click();
   await page.getByRole("button", { name: "Restore Baseline" }).click();
   await page.getByRole("button", { name: "Restore version" }).click();
-  await expect(paragraph).toHaveValue("Before the experiment");
+  await expect(paragraph).toHaveText("Before the experiment");
   await page.getByRole("button", { name: /History/ }).click();
   await expect(page.locator(".version-card")).toHaveCount(1);
 });
