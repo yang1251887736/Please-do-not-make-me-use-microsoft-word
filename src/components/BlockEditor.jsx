@@ -433,6 +433,8 @@ function RichTextEditor({
   };
 
   // shift+enter:change the line, enter: create a new block
+  // arrow
+  // backspace
   return (
     <div className="editable-text-wrap">
       {onFormatChange && (

@@ -24,6 +24,7 @@ resizable columns.
 7. Click 'import'/'export'/'export PDF' buttons to save or load documents.
 8. Click 'history' button to save and restore previous versions.
 9. Confirm destructive operations when prompted.
+10. Use 'Enter' to create a new block, use "Shift + Enter" to creat a new line
 
 ## Live Demo
 https://yang1251887736.github.io/Please-do-not-make-me-use-microsoft-word/
