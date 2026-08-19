@@ -6,7 +6,7 @@ export default defineConfig({
   retries: 1,
   reporter: "html",
   use: {
-    baseURL: "http://127.0.0.1:4173/yyc/",
+    baseURL: "http://127.0.0.1:4173/Please-do-not-make-me-use-microsoft-word/",
     trace: "on-first-retry",
   },
   projects: [
@@ -17,7 +17,7 @@ export default defineConfig({
   ],
   webServer: {
     command: "pnpm build && pnpm preview --host 127.0.0.1 --port 4173",
-    url: "http://127.0.0.1:4173/yyc/",
+    url: "http://127.0.0.1:4173/Please-do-not-make-me-use-microsoft-word/",
     reuseExistingServer: true,
   },
 });
